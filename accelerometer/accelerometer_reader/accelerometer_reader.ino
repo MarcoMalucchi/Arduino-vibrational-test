@@ -1,13 +1,13 @@
 /*
-Here the first version of an Arduino-based accelerometer reader.
+Now we move to a more advance version: a data structure which will store the data and which will be send wia serial to the python interface.
 In the void set-up there is the MPU configuration (clock source, low-pass filter, sample divider, accelerometer full-scale and INT PIN configuration). The data acquisition is performed
 directly reading the ACCEL_X/Y/ZOUT_H/L registers at every INT rising edge trough a ISR design.
 So the design (pretty simple actually) is about the following:
 1. Start up and based configuration
 2. Direct reading of the accelerometer storing registers
-3. Conversion of the signed 2 bytes values in units of g and print in the serial.
+3. Storing the data in the structure and send it via serial
 
-Next step is to create a data structure and biuld the serial comunication which will be used by a python interface for a live plot.
+Next step create the python live plot
 */
 #include "Wire.h"
 
@@ -39,6 +39,21 @@ const int INT_PIN = 3;
 
 // for the interrupt which will listen the INT PIN state
 volatile bool dataReady = false;  // this variable will be modify by the ISR asynchronously
+volatile uint32_t sampleTime; // The timestamp will be recorded inside the ISR
+
+// Data packet
+struct Packet {
+  uint16_t header = 0xAAAA;
+  int16_t ax;
+  int16_t ay;
+  int16_t az;
+  uint32_t timestamp;
+}__attribute__((packed));
+
+Packet sample;  // Same logic of the object type used to store the states of the motor machine. Create an object named "sample" of type Packet
+                // A sample is one of the instance/object of type Packet, ax/y/z, header (which is fixed)
+                // and timestamp are called "members" of the struct.
+                // This line means "create an object named "sample" whose type is "packed"".
 
 // ---I2C transaction function and MPU-data reader
 
@@ -66,38 +81,57 @@ byte readRegister(byte reg) {
 // ---The interrupt---
 void mpuDataReady() {
   dataReady = true;
+  sampleTime = micros();
 }
 // ------
 
 // ---Data Reader---
-void dataReader() {
+void dataReader() { // Modify to fille the packet instead of converting the data read from the device in float
 
   noInterrupts();
   bool localDataReady = dataReady;
   dataReady = false;  // I have to consume the flag once I copied it, so to avoid infinite loop. I have to clear the flag
+  uint32_t localSampleTime = sampleTime;  // timestamp in packet updated
   interrupts();
 
   if (!localDataReady) {
     return;
   }
   
+  sample.timestamp = localSampleTime;
+
   Wire.beginTransmission(MPU_ADDRESS);
   Wire.write(ACCEL_XOUT_H);
   Wire.endTransmission(false);
+  Wire.requestFrom(MPU_ADDRESS, 6);
 
-  Wire.requestFrom(MPU_ADDRESS, 6); // What change from the readRegister function is that here I ask MPU for 6 bytes, since I want to perform a burnst read of the 6 acceleration-
-                                    // measurement registers
+  //byte txError = Wire.endTransmission(false);
+
+  // if (txError != 0) {
+  //   Serial.print("Tx error: ");
+  //   Serial.println(txError);
+  //   return;
+  // }
+
+  // size_t receivedBytes = Wire.requestFrom(MPU_ADDRESS, 6);  // What change with respect the readRegister function is that here we ask 6 bytes in the transaction with the MPU
+
+  // if (receivedBytes != 6) {
+  //     Serial.println("ERROR IN THE I2C TRANSACTION WITH THE MPU.");
+  //     Serial.print("Received bytes: ");
+  //     Serial.println(receivedBytes);
+  //     return;
+  // }
   
-  float ax = ((int16_t)((uint16_t(Wire.read()) << 8) | Wire.read()))/16384.0f; // Here I reconstruct the 2 bytes signed values of the acceleration measurements performed by the device
-  float ay = ((int16_t)((uint16_t(Wire.read()) << 8) | Wire.read()))/16384.0f; // and I convert them in units of g using the sensitivity per LSB of the accelerometer gives by setting the
-  float az = ((int16_t)((uint16_t(Wire.read()) << 8) | Wire.read()))/16384.0f; // full scale of the instrument trough the ACCEL_CONFIG register
+  sample.ax = (int16_t)((uint16_t(Wire.read()) << 8) | Wire.read());
+  sample.ay = (int16_t)((uint16_t(Wire.read()) << 8) | Wire.read());
+  sample.az = (int16_t)((uint16_t(Wire.read()) << 8) | Wire.read());
 
-  Serial.print("X Acceleration: ");
-  Serial.println(ax, 6);
-  Serial.print("Y Acceleration: ");
-  Serial.println(ay, 6);
-  Serial.print("Z  Acceleration: ");
-  Serial.println(az, 6);
+  Serial.write((uint8_t*)&sample, sizeof(sample));  // here the actual writer command. &sample is the Arduino's RAM address of the first byte of the struct, it says to Serial.wire
+                                                    // where if the first byte of the struct. Then sizeof(sample) says to Serial.write() to continue writing for 12 bytes.
+                                                    // the cast uint8_t* says "consider those 12 bytes as a byte sequence", becasue this is what Serial.write() expects
+                                                    // NOTE: &sample is a c++ pointer.
+
+  //Serial.println("READ OK");
 }
 
 void setup() {
@@ -123,5 +157,4 @@ void setup() {
 
 void loop() {
   dataReader();
-  delay(2000);
 }
