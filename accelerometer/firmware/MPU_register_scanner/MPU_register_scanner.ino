@@ -67,6 +67,17 @@ void setup() {
     Serial.println(value, HEX);
 
   }
+
+  Serial.println("Testing 6-byte burst read...");
+
+  Wire.beginTransmission(MPU_ADDRESS);
+  Wire.write(0x3B);
+  Wire.endTransmission(false);
+
+  Wire.requestFrom(MPU_ADDRESS, 6);
+
+  Serial.print("Bytes available: ");
+  Serial.println(Wire.available());
 }
 
 void loop() {

@@ -49,6 +49,12 @@ void setup() {
       Serial.println(address, HEX);
     }
   }
+
+  identity = readRegister(0x75);
+
+  Serial.print("WHO_AM_I: 0x");
+  Serial.println(identity, HEX);
+  
 }
 
 void loop() {
