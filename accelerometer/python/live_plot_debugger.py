@@ -35,8 +35,10 @@ becomes divided into two seprated workflows or threads:
 
 They run CONCURRENTLY
 
-'''
+In this new version python no longer start the acquisition thread immediately after opening the serial port. Instead firstly perfomr the handshake
+with Arduino and once it receives the confirmation of the MEASURING state, it starts the acquisition thread. 
 
+'''
 
 
 
@@ -117,6 +119,52 @@ for axis, label in zip(axes, labels):	# zip() function is used to iterate over t
 ######################
 # --- FUNCTIONS. ---
 ######################
+
+# --- To control the Arduino messages ---
+'''
+Its responsibility is only the control phase. It should not know anything about your packet format, acceleration conversion, deques,
+plotting, locks, etc.
+'''
+def perform_handshake(ser):
+
+	count = 0
+
+	while True:
+
+		ser.write(b"STATE?\n")	# python requests to Arduino its state
+
+		message_ready = ser.readline().decode().strip()	#readline reads b"READY\r\n"
+														#decoe() converts b"" (bytes) to string "READY\r\n"
+														#strip() removes the \r\n
+
+		if message_ready == "INITIALIZING":
+			if count == 0:
+				print("Arduino is initializing.", "\n")
+				count += 1
+			continue
+
+		if message_ready == "READY":
+			ser.write(b"START\n")	#send start message
+			print("Arduino reached READY state. START message sent.", "\n")
+			break
+
+	while True:
+
+		message_measuring = ser.readline().decode().strip()
+
+		if message_measuring == "MEASURING":
+			print("Arduino reached MEASURING state.", "\n")
+			return True	# The function has to return a success/failure message
+
+'''
+True
+    Arduino reached MEASURING
+    binary acquisition may begin
+
+False
+    handshake failed
+    do NOT start acquisition thread
+'''
 
 # --- To unpack the data structs send by Arduino ---
 def decode_packet(data):
@@ -293,12 +341,18 @@ def main():
 	ser = serial.Serial(PORT, BAUD_RATE, timeout=0.1)	# The timeout is useful to avoid that the acquisition thread may sit indefinitly
 														# inside ser.read(PACKET_SIZE) once we close the graph
 
+	perform_handshake(ser)	# This function returns only when Arduino has reached MEASURING state
+
+	print("Handshake successful", '\n')
+
 	acquisition_thread = threading.Thread(target=acquire_data, args=(ser,), daemon=True)
 	#NOTE: This line is really important: it creates the second execution workflow, i.e. the second thread. Indeed it points to the relative
 	#function acquire_data()
 	#NOTE: we do not need to create the main thread, it is created automatically by the python interpreter.
 
 	acquisition_thread.start()	# And here we simply start the second thread
+
+	print("Acquisition thread started", '\n')
 
 	animation = FuncAnimation(fig, update_plot, interval=PLOT_INTERVAL_MS, cache_frame_data=False)	# This function just continuosly update
 																									# the plot every 50ms passing the frame
@@ -311,6 +365,20 @@ def main():
 		stop_event.set()	# Here we set the stop_event so that the while piece of code of acquire_data won't run
 		acquisition_thread.join()	# Wait for this thread to finish before continuing, so to avoid that it will stuck in the
 									# ser.read(PACKET_SIZE) line
+
+		while True:	# We wait until the Arduino has reached the READY state before closing the serial communication
+
+			ser.reset_input_buffer()	# We reset the input buffer so that we can read the "READY" message, without erroneously reading some old data bytes
+										# We do it before sending the STOP command, since Arduino may react rapdly and we could eventually lose the message
+			ser.write(b"STOP\n")
+
+			restoring_message = ser.readline().decode().strip()
+
+			if restoring_message == "READY":
+				print("Arduino reached READY state. Now the serial port will be closed", "\n")
+
+			break
+
 		ser.close()	# Then we wait ultil the acquisition thread is finished to close the serial port, rather than closing resources while
 					# while another thread might still be using them
 
