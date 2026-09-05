@@ -1,5 +1,5 @@
 /*
-Here we create an accelerometer reader state machine. Thanks to this update, python can syncronize with Arduino avoiding I2C startup errors.
+Here we create an accelerometer-reader state machine. Thanks to this update, python can syncronize with Arduino avoiding I2C startup errors.
 The states of the machine will be three:
 
 1. INITIALIZING --> Arduino is working to correctly sets up the MPU
@@ -8,15 +8,18 @@ The states of the machine will be three:
 
 3. MEASURING --> MPU initialized + DATA_READY acquisition enabled + Arduino reading acceleration + Arduino transmitting measurement packets
 
-The basic state machine becomes: "Python requenst START" --> "the machine goes to MEASURING from READY"
+The basic state machine becomes:
+
+  - "Python requests START" --> "the machine goes to MEASURING from READY"
+  - "Python requests STOP" --> "the machine goes to READY from MEASURING"
 
 So basically:
 
   - Arduino initialized the MPU, sets in READY, tells python
   - Python recognize the state and ask for START
-  - Arduino recognize the request and goes to MEASURING, tells python which starts expecting packets to decode
+  - Arduino recognize the request and goes to MEASURING, tells python, which starts expecting packets to decode
   - The packets are finally send
-  - Lastly, when the serial communication is stopped python send a STOP comamnd which will reset Arduino to the READY state
+  - Lastly, when the serial communication is stopped, python send a STOP comamnd which will reset Arduino to the READY state
 
 That's agenuine HANDSHAKE
 In this way python does not immediatly starts looking for Arduino packets, it first waits for Arduino to tell it which state it is in.
@@ -24,6 +27,7 @@ In this way python does not immediatly starts looking for Arduino packets, it fi
 
 #include "Wire.h"
 
+// Device address
 const byte MPU_ADDRESS = 0X68;  //NOTE: this hexadecimal values are just bytes inside the decive, so they have to declare in this way, as bytes
 const byte WHO_AM_I = 0X75;
 
@@ -49,9 +53,10 @@ const byte ACCEL_ZOUT_L = 0x40;
 // power management register for global configuration
 const byte PWR_MGMT_1   = 0x6B;
 
+// INT PIN
 const int INT_PIN = 3;
 
-// for the interrupt which will listen the INT PIN state
+// for the interrupt, which will listen the INT PIN state
 volatile bool dataReady = false;  // this variable will be modify by the ISR asynchronously
 volatile uint32_t sampleTime; // The timestamp will be recorded inside the ISR
 
@@ -64,9 +69,10 @@ struct Packet {
   int16_t az;
   uint32_t timestamp;
 }__attribute__((packed));
-// NOTE: we decided to extend the packet with a STATUS FIELD, so that Arduino can send via serial (to the python interface) eventual diagnosis messages
+// NOTE: we decided to extend the packet with a STATUS FIELD, so that Arduino can send via serial (to the python interface) eventual diagnosis messages regarding the validity of the 
+// packets
 
-// Here we define statuses
+// Here we define packets statuses
 const byte STATUS_OK = 0; // valide accelerometer sample
 const byte STATUS_I2C_TX_ERROR = 1; // failed while setting ACCEL_XOUT_H register pointer
 const byte STATUS_I2C_READ_ERROR = 2; // failed whiel requesting the six acceleration bytes
@@ -78,7 +84,7 @@ Packet sample;  // Same logic of the object type used to store the states of the
 
 // Accelerometer states
 enum AccelerometerState { // enum garantees that the state variable contains one state at a time
-  INITIALIZING, //that's needed just to the machine itself
+  INITIALIZING,
   READY,
   MEASURING
 };
@@ -86,7 +92,7 @@ enum AccelerometerState { // enum garantees that the state variable contains one
 AccelerometerState accelerometerState = INITIALIZING; // So that we can distinguish between the not-READY-yet state and READY state, which are different states with respect MEASURING
                                                       // Now the booting process has a meaningful state
 
-// ---I2C transaction function and MPU-data reader
+// ---I2C-TRANSACTION FUNCTIONS---
 
 // ---To write in register---
 // NOTE: to create an intelligent setup it is important to make writeRegister return the I2C result
@@ -96,7 +102,6 @@ byte writeRegister(byte reg, byte value) {
   Wire.write(value);
   return Wire.endTransmission();  // Now we can check every configuration transaction
 }
-// ------
 
 // ---To read inside register---
 bool readRegister(byte reg, byte &value) {  // & here has the function to point at an existing global/local variable used/declaired elsewhere, which value may be changed by
@@ -119,16 +124,14 @@ bool readRegister(byte reg, byte &value) {  // & here has the function to point 
 
   return true;
 }
+
 // ------
 
-// ---The interrupt---
-void mpuDataReady() {
-  dataReady = true;
-  sampleTime = micros();
-}
 // ------
 
-// --- The MPU-initialization function ---
+// --- THE MPU-INITIALAZATION/CONFIGURATION FUNCTIONS ---
+
+// --- MPU initial configuration ---
 // NOTE: what this function does:
 /*
 1. restart I2C if needed
@@ -211,7 +214,6 @@ actually means "The MPU generates DATA_RDY interrupts and Arduino listens to the
 */
   return true;
 }
-// ------
 
 // --- Start-measuring function ---
 /*
@@ -260,6 +262,16 @@ bool stopMeasurement() {
   return true;
 }
 // ------
+
+// ------
+
+// --- DATA READING FUNCTIONS ---
+
+// ---The interrupt---
+void mpuDataReady() {
+  dataReady = true;
+  sampleTime = micros();
+}
 
 // ---Data Reader---
 void dataReader() { // Modified to fill the packet instead of converting the data read from the device in float
@@ -327,17 +339,21 @@ void dataReader() { // Modified to fill the packet instead of converting the dat
 }
 // -------
 
+
+
 // --- This function contains the serial command handling for the handshake ---
+
 void handleControlMessage() {
 
   if (Serial.available() == 0) { // That checks if I have bytes waiting to be read in the Arduino serial buffer
-    return;
+    return; // If htere aren't bytes retunr
   }
-
+  
+  // else
   String command = Serial.readStringUntil('\n');
   command.trim();
 
-  if (command == "STATE?") {
+  if (command == "STATE?") {  // Python continously requesting the state of the machine
 
     if (accelerometerState == INITIALIZING) {
       Serial.println("INITIALIZING"); // Arduino communicates its state to python so that it can send the START message
@@ -349,14 +365,14 @@ void handleControlMessage() {
 
   }
 
-  else if (command == "START" && accelerometerState == READY) {
+  else if (command == "START" && accelerometerState == READY) { // If you obtain the python START message, then set-up the MPU to start measuring and if it succedes change the state
     if (startMeasurement()) {
       accelerometerState = MEASURING;
       Serial.println("MEASURING");  // Once python has received the MEASURING-state-been-reached message, it can switch the binary packet decoder (important because I'm using the
-                                  // same serial connectio for text and binary data)
+                                    // same serial connection for text and binary data)
     }
   }
-  else if (command == "STOP" && accelerometerState == MEASURING) {
+  else if (command == "STOP" && accelerometerState == MEASURING) {  // When python send the STOP message, set-up the MPU to return to the READY state
     if (stopMeasurement()) {
       accelerometerState = READY;
       Serial.println("READY");

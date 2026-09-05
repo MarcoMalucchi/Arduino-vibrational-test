@@ -1,6 +1,6 @@
 /*
 HERE THE SECOND VERSION OF THE STEPPER-MOTOR CONTROLLER WITH PHOTOCELLS TO ACTIVELLY MEASURE ITS FREQUENCY
-we have change the way with which the measure is performed --> measure of the exact elapsed time between first and last photocells edges occuring during the window of measurements
+we have changed the way with which the measure is performed --> measure of the exact elapsed time between first and last photocells edges occuring during the window of measurements
 
 Base idea: we use the internal hardware of the microcontroller inside the Arduino chip to generate a square waveform (considering its source, with high-precision frequency) which
 is sent trough the STEP_PIN directly to the motor driver and which then control the rotation of the motor.
@@ -51,7 +51,7 @@ startingPulseTime), now compute the frequency
 
 // Global variables for Arduino's motor digital pins
 const int DIR_PIN = 7;  // to control the direction of rotation
-const int STEP_PIN = 3; // to control the rotation of the motor shaft
+const int STEP_PIN = 5; // to control the rotation of the motor shaft
 const int ENABLE_PIN = 4; // to enable or disable the driver of the motor, so to stop it or start it
 const int PHOTOC_PIN = 2; // photocells pin, in Arudino uno r4 minima only pin D2 and D3 can be used in the interrupt mode
 

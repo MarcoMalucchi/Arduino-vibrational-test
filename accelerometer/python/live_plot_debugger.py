@@ -35,12 +35,10 @@ becomes divided into two seprated workflows or threads:
 
 They run CONCURRENTLY
 
-In this new version python no longer start the acquisition thread immediately after opening the serial port. Instead firstly perfomr the handshake
-with Arduino and once it receives the confirmation of the MEASURING state, it starts the acquisition thread. 
+In this new version python no longer start the acquisition thread immediately after opening the serial port. Instead firstly it perfomrs the
+handshake with Arduino and once it receives the confirmation of the MEASURING state, it starts the acquisition thread.
 
 '''
-
-
 
 import serial
 import struct
@@ -253,7 +251,7 @@ def acquire_data(ser):
 		if new_status != 0:
 			if previous_status is None:
 				if new_status == 1:
-					print(f"[MPU6050] I2C communication unavailable at startup: I2C_TX_ERROR")
+					print(f"[MPU6050] I2C communication unavailable at startup: I2C_TX_ERROR")	# These should no longer happen with the state-machine design
 				elif new_status == 2:
 					print(f"[MPU6050] I2C communication unavailable at startup: I2C_READ_ERROR")
 			elif previous_status == 0:
@@ -367,6 +365,7 @@ def main():
 									# ser.read(PACKET_SIZE) line
 
 		while True:	# We wait until the Arduino has reached the READY state before closing the serial communication
+			
 
 			ser.reset_input_buffer()	# We reset the input buffer so that we can read the "READY" message, without erroneously reading some old data bytes
 										# We do it before sending the STOP command, since Arduino may react rapdly and we could eventually lose the message
