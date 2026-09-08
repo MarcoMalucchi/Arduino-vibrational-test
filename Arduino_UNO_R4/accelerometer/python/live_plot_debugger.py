@@ -258,7 +258,7 @@ def acquire_data(ser):
 				if new_status == 1:
 					print(f"[MPU6050] I2C communication LOST, I2C_TX_ERROR: failed while setting ACCEL_XOUT_H register pointer, at {time_s:.2f}s")
 				elif new_status == 2:
-					print(f"[MPU6050] I2C communication LOST, I2C_READ_ERROR: failed whiel requesting the six acceleration bytes, at {time_s:.2f}s")
+					print(f"[MPU6050] I2C communication LOST, I2C_READ_ERROR: failed while requesting the six acceleration bytes, at {time_s:.2f}s")
 
 			previous_status = new_status
 			continue

@@ -27,4 +27,5 @@ Arduino-based control and data-acquisition system for a vibrational test on a tw
 ## Current development
 
 The entire firmware of the project has been successfully developed in the Arduino UNO R4 enviroment, moreover a python interface for accelerometer-data live plotting has been developed too.
-At the actual state the complete R4 firmware is being adappted to the nano esp32 enviroment and the data communication is begin changed from serial to bluetooth.
+At the actual state the complete R4 firmware is being adappted to the nano esp32 enviroment.
+The next step it to change the data communication from serial to bluetooth.
