@@ -1,4 +1,4 @@
-# Arduino Virbational Test
+# Arduino Vibrational Test
 
 Arduino-based control and data-acquisition system for a vibrational test on a two-floor building model
 
