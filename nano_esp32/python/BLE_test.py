@@ -1,5 +1,5 @@
 '''
-Minimal Bluetooth Low Energy scanning test using the Bleak library.
+Minimal Bluetooth Low Energy discovery and connection test using Bleak.
 
 Architecture:
 
@@ -7,30 +7,34 @@ Ubuntu laptop
     │
     └── BLE central / GATT client
             │
-            └── BleakScanner
-                    │
-                    └── searches for nearby BLE peripherals
+            ├── BleakScanner
+            │       └── discovers nearby BLE peripherals
+            │
+            └── BleakClient
+                    └── establishes and manages a connection
+                        with the Nano ESP32
 
-The goal of this first test is simply:
-1. Start a BLE scan from Python.
-2. Wait for nearby BLE advertisements to be discovered.
-3. Store the discovered devices.
-4. Print every discovered BLE device.
+The goal of this test is:
+1. Scan for nearby BLE peripherals.
+2. Print every discovered device.
+3. Create a BleakClient associated with the known Nano ESP32 address.
+4. Establish a BLE connection with the Nano.
+5. Verify that the connection has been established.
+6. Disconnect cleanly.
 
-This script also introduces asynchronous programming through asyncio.
-BLE operations take time because the program has to wait for events
-coming from external devices. Instead of blocking the entire workflow
-while waiting, an asynchronous operation can yield control to the
-asyncio event loop and continue when its result becomes available.
+At this stage the program does NOT yet exchange application data with the
+Nano. Connecting to the peripheral only establishes the BLE connection.
+Interaction with our command characteristic will be introduced afterwards.
 '''
 
 
 # BleakScanner provides the BLE scanning functionality.
-from bleak import BleakScanner
+from bleak import BleakScanner, BleakClient
+
+NANO_ADDRESS = "E4:B0:63:AD:4F:E5"
 
 # asyncio provides Python's asynchronous event-loop infrastructure.
 import asyncio
-
 
 # "async def" defines main() as a coroutine function.
 #
@@ -54,8 +58,20 @@ async def main():
     # Iterate over every BLE device returned by the scanner and print
     # the information Bleak associates with that device.
     for device in devices:
-
         print(device)
+
+    # Create a BleakClient object associated with the Nano's BLE address.
+    # Creating the object does NOT establish the BLE connection yet; it gives
+    # us the client interface through which we can connect, disconnect and,
+    # once connected, interact with the Nano's GATT services/characteristics.
+    client = BleakClient(NANO_ADDRESS)
+
+    await client.connect()
+
+    if client.is_connected:
+        print("Nano connected")
+
+    await client.disconnect()
 
 
 # Start Python's asyncio event loop and execute the main() coroutine.
