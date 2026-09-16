@@ -32,6 +32,7 @@ Interaction with our command characteristic will be introduced afterwards.
 from bleak import BleakScanner, BleakClient
 
 NANO_ADDRESS = "E4:B0:63:AD:4F:E5"
+COMMAND_CHARACTERISTIC_UUID = "19B10001-E8F2-537E-4F6C-D104768A1214"
 
 # asyncio provides Python's asynchronous event-loop infrastructure.
 import asyncio
@@ -70,6 +71,17 @@ async def main():
 
     if client.is_connected:
         print("Nano connected")
+
+    # runtime data
+    command = "GO"
+
+    for service in client.services:
+        print("Service: ", service.uuid)
+        for characteristic in service.characteristics:
+            print("     Characteristic: ", characteristic.uuid,
+                   "\n", "          Properties: ", characteristic.properties)
+
+    await client.write_gatt_char(COMMAND_CHARACTERISTIC_UUID, command.encode())
 
     await client.disconnect()
 
@@ -110,26 +122,32 @@ for the events associated with this operation.
 Conceptually:
 
     main()
-      |
-      |-- start BleakScanner.discover()
-      |
-      |-- await --------------------------------------+
-      |                                               |
-      |      main() is suspended                      |
-      |                                               |
-      |      Bluetooth hardware / Linux / BlueZ       |
-      |      perform BLE discovery while asyncio      |
-      |      waits for the required events            |
-      |                                               |
-      |                         scan completes --------+
-      |
-      |-- main() resumes
-      |
-      |-- devices receives the discovery result
-      |
-      |-- print every discovered device
-      |
-      +-- main() terminates
+        |
+        |-- start BleakScanner.discover()
+        |
+        |-- await --------------------------------------+
+        |                                               |
+        |      main() is suspended                      |
+        |                                               |
+        |      Bluetooth hardware / Linux / BlueZ       |
+        |      perform BLE discovery while asyncio      |
+        |      waits for the required events            |
+        |                                               |
+        |                         scan completes --------+
+        |
+        |-- print every discovered device
+        |
+        |-- create BleakClient
+        |
+        |-- await connection
+        |
+        |-- inspect GATT services
+        |       |
+        |       +-- inspect characteristics and their properties
+        |
+        |-- await disconnection
+        |
+        +-- main() terminates
 
 The advantage of asyncio becomes more evident when several asynchronous
 tasks exist. If one coroutine is waiting for a BLE event, the event loop can
