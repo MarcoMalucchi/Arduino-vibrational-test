@@ -142,8 +142,8 @@ def perform_handshake(ser):
 			continue
 
 		if message_ready == "READY":
-			ser.write(b"START\n")	#send start message
-			print("Arduino reached READY state. START message sent.", "\n")
+			ser.write(b"MEASURE\n")	#send start message
+			print("Arduino reached READY state. MEASURE message sent.", "\n")
 			break
 
 	while True:
