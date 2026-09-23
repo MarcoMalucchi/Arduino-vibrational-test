@@ -10,3 +10,7 @@ Thumbs.db
 
 # Pdf files
 *.pdf
+
+# Particular files
+bluetooth_transition_design.txt
+design_python_script.txt

@@ -20,13 +20,18 @@ const int INT_PIN = 3;
 // necessary to set the frequency of rotation of the shaft.
 const int STEPS_PER_REVOLUTION = 400;
 
+
+
 // For the PWM mode in Arduino nano esp32
 // NOTE: the ESP32 chip has different pwm channels, so to use the pwm mode, firstly it is necessary to chose one among them, then attach to it the Arduino pin. Moreover the logic has
 // also a resolution, which, trough a divider, set the minimum and maximum frequency that the generated waveform can reach
 const uint8_t PWM_CHANNEL = 0;
 const uint8_t PWM_RESOLUTION = 10;
 
-// Device address
+
+
+// MPU ADDRESSES
+
 const byte MPU_ADDRESS = 0X68;
 const byte WHO_AM_I = 0X75;
 
@@ -52,7 +57,9 @@ const byte ACCEL_ZOUT_L = 0x40;
 // power management register for global configuration
 const byte PWR_MGMT_1   = 0x6B;
 
-// The declareation of the states of the motor.
+
+
+// DECLARATION OF MOTOR STATES.
 
 bool pwmRunning = false; // The logical state of the PWM Arduino's pin used to rotate the motor, if HIGH it is rotating, otherwise it is not. That's not a real steate of the motor,
                          // is more like something needed to control the signal at STEP_PIN, at least conceputually speaking. It's a flag
@@ -65,6 +72,23 @@ enum MotorStates {
 };
 
 MotorStates motorState = STOPPED; // Setting the defaul state of the motor
+
+String motorStateToString() {
+
+  if (motorState == STOPPED) {
+      return "STOPPED";
+  }
+
+  if (motorState == RAMPING) {
+      return "RAMPING";
+  }
+
+  if (motorState == AT_TARGET) {
+      return "AT_TARGET";
+  }
+
+  return "UNKNOWN";
+}
 
 // Variables needed to keep track of the frequency of the motor, last of its update and to perform its increase or decrease for the acceleration of the motor.
 float currentFrequency = 0.0;
@@ -82,11 +106,13 @@ unsigned long previousFrequencyUpdate = 0;  // The time at which the last freque
 
 const float START_FREQUENCY = 0.25; // The default frequency of the motor at which it will starts rotate when started (when the user will write the first GO in the serial door)
 
+
+
 // ACCELEROMETER STATES DEFINITION AND DATA PACKET DECLARATION
 
 // Data packet
 struct Packet {
-  uint16_t header = 0xAAAA;
+  //uint16_t header = 0xAAAA; with the bluetooth communication is no longer necessary to ad an header since the packets are sent directly as packet instead as stream of bytes
   uint8_t status; // this bring diagnostic information regarding the status of the I2C communication
   int16_t ax;
   int16_t ay;
@@ -116,10 +142,30 @@ enum AccelerometerState { // enum garantees that the state variable contains one
 AccelerometerState accelerometerState = INITIALIZING; // So that we can distinguish between the not-READY-yet state and READY state, which are different states with respect MEASURING
                                                       // Now the booting process has a meaningful state
 
+String accelerometerStateToString() {
+
+  if (accelerometerState == INITIALIZING) {
+      return "INITIALIZING";
+  }
+
+  if (accelerometerState == READY) {
+      return "READY";
+  }
+
+  if (accelerometerState == MEASURING) {
+      return "MEASURING";
+  }
+
+  return "UNKNOWN";
+}
+
 // for the interrupt used for the accelerometer, which will listen the INT PIN state
 volatile bool dataReady = false;  // this variable will be modify by the ISR asynchronously
 volatile uint32_t sampleTime; // The timestamp will be recorded inside the ISR
 
+
+
+//FREQUENCYMETER
 // Variables needed to measure the frequency from the photocells's signal, those will be used by the ISR mainly
 volatile unsigned long pulseCount = 0;  // the pulse counter variable shared between ISR and loop()
 volatile unsigned long lastPulseTime = 0; // the time of the last pulse detected by the ISR
@@ -135,6 +181,41 @@ const unsigned long MEASUREMENT_INTERVAL = 5000000; // The amount of time which 
 
 float measuredFrequency;  // The frequency measured with the photocells
 
+
+
+// BLUETOOTH SERVICE AND CHARACTERISTICS DECLARATION
+
+#include <ArduinoBLE.h>
+
+BLEService nanoService(
+  "19B10000-E8F2-537E-4F6C-D104768A1214"
+);
+
+BLEStringCharacteristic commandCharacteristic(
+  "19B10001-E8F2-537E-4F6C-D104768A1214",
+  BLEWrite | BLENotify,
+  40
+);
+
+
+BLECharacteristic dataCharacteristic(
+  "19B10002-E8F2-537E-4F6C-D104768A1214",
+  BLENotify,
+  sizeof(sample)
+);
+
+void sendState() {
+  String message =
+      "MOTOR:" + motorStateToString() +
+      ";ACC:" + accelerometerStateToString();
+
+  Serial.print("Sending: ");
+  Serial.println(message);
+
+  commandCharacteristic.writeValue(message);
+}
+
+bool wasConnected = false;
 
 // ---START/STOP MOTOR FUNCTIONS---
 void startMotor() { // Here STOPPED --> RAMPING (this function only changes the logical state, does not actually start the motor)
@@ -212,9 +293,7 @@ void updateFrequency() {
       motorState = AT_TARGET; // Set the state of the machine as "frequency target reached (no more frequency update needed)", i.e. motorState = AT_TARGET. Then send the message.
                               // PAY ATTENTION: the state of the machine has to be changed only when the target is reached. But updateFrequency runs at every incrementation of
                               // the frequency, so motorState has to changed at the right moment, so inside the if-frequency-exceeded control
-      Serial.print("Target frequency ");
-      Serial.print(currentFrequency);
-      Serial.println(" Hz reached!\n");
+      sendState();
     }
   }
   else if (currentFrequency > targetFrequency) {
@@ -223,9 +302,7 @@ void updateFrequency() {
       currentFrequency = targetFrequency;
 
       motorState = AT_TARGET;
-      Serial.print("Target frequency ");
-      Serial.print(currentFrequency);
-      Serial.println(" Hz reached!\n");
+      sendState();
     }
   }
 
@@ -286,6 +363,10 @@ void frequencyMeter() {
 
   } else { // Yes, then perform the computation of the frequency
       measuredFrequency = (1000000.0*(localPulseCount - windowStartPulseCount))/(localLastPulseTime - windowStartPulseTime);
+
+      String message = "FREQ_MEASURED:" + String(measuredFrequency, 4);
+      commandCharacteristic.writeValue(message);
+
       windowStartPulseTime = localLastPulseTime;  // Start a new window using the latest edge --> once a window finished the last edge of the old window becomes the first edge of the 
                                                   // subsequent one.
       windowStartPulseCount = localPulseCount;
@@ -442,8 +523,7 @@ bool startMeasurement() {
 
   if (startError != 0) { // Enable DATA_RDY interrupt:
                                                     // triggered when a new set of sensor data has been written to the sensor output registers
-    Serial.print("STOP I2C ERROR: ");
-    Serial.println(startError);
+    //commandCharacteristic.writeValue("I2C ERROR " + String(startError));
     detachInterrupt(digitalPinToInterrupt(INT_PIN));
     Wire.end();
     Wire.begin();
@@ -467,13 +547,11 @@ bool stopMeasurement() {
     byte stopError = writeRegister(INT_ENABLE, 0b00000000);
 
     if (stopError != 0) {
-      Serial.print("STOP I2C ERROR: ");
-      Serial.println(stopError);
+      //commandCharacteristic.writeValue("I2C ERROR " + String(stopError));
 
       Wire.end();
       Wire.begin();
 
-      //return false;
     }
 
     return true;
@@ -511,7 +589,7 @@ void dataReader() { // Modified to fill the packet instead of converting the dat
 
   if (txError != 0) { // The idea is that we detect an I2C error occuring during the communication we must not update ax, ay and az
     sample.status = STATUS_I2C_TX_ERROR;
-    Serial.write((uint8_t*)&sample, sizeof(sample));
+    dataCharacteristic.writeValue((uint8_t*)&sample, sizeof(sample));
     Wire.end(); // This two lines are needed to restore the I2C pins status and then restart the regular communication
     Wire.begin();
     return;
@@ -521,7 +599,7 @@ void dataReader() { // Modified to fill the packet instead of converting the dat
 
   if (receivedBytes != 6) {
     sample.status = STATUS_I2C_READ_ERROR;
-    Serial.write((uint8_t*)&sample, sizeof(sample));
+    dataCharacteristic.writeValue((uint8_t*)&sample, sizeof(sample));
     Wire.end(); // This two lines are needed to restore the I2C pins status and then restart the regular communication
     Wire.begin();
     return;
@@ -539,11 +617,11 @@ void dataReader() { // Modified to fill the packet instead of converting the dat
 
   sample.status = STATUS_OK;
 
-  Serial.write((uint8_t*)&sample, sizeof(sample));  // here the actual writer command. &sample is the Arduino's RAM address of the first byte of the struct, it says to Serial.wire
-                                                    // where if the first byte of the struct. Then sizeof(sample) says to Serial.write() to continue writing for the number of bytes
-                                                    // which constitute the packet.
-                                                    // The cast uint8_t* says "consider those 12 bytes as a byte sequence", becasue this is what Serial.write() expects
-                                                    // NOTE: &sample is a c++ pointer.
+  dataCharacteristic.writeValue((uint8_t*)&sample, sizeof(sample));  // here the actual writer command. &sample is the Arduino's RAM address of the first byte of the struct, it says to Serial.wire
+                                                                    // where if the first byte of the struct. Then sizeof(sample) says to Serial.write() to continue writing for the number of bytes
+                                                                    // which constitute the packet.
+                                                                    // The cast uint8_t* says "consider those 12 bytes as a byte sequence", becasue this is what Serial.write() expects
+                                                                    // NOTE: &sample is a c++ pointer.
 
   // delay(1000); // debugging
 
@@ -561,88 +639,18 @@ void dataReader() { // Modified to fill the packet instead of converting the dat
 
 // ---THE PARSER---
 
-// ---To make the machine prints its status while running---
-void printStatus() {
-  // Machine state printing
-  switch (motorState) {
-    case STOPPED:
-      Serial.println("MOTOR STATE: STOPPED");
-      break;
-
-    case RAMPING:
-      Serial.println("MOTOR STATE: RAMPING");
-      break;
-
-    case AT_TARGET:
-      Serial.println("MOTOR STATE: AT_TARGET");
-      break;
-  }
-
-  switch (accelerometerState) {
-    case INITIALIZING:
-      Serial.println("ACCELEROMETER STATE: INITIALIZING");
-      break;
-    
-    case READY:
-      Serial.println("ACCELEROMETER STATE: READY");
-      break;
-
-    case MEASURING:
-      Serial.println("ACCELEROMETER STATE: MEASURING");
-      break;
-  }
-
-  // Printing of current frequency and target frequency of the motor
-  Serial.print("CURRENT: ");
-  Serial.println(currentFrequency, 3);
-  Serial.print("TARGET: ");
-  Serial.println(targetFrequency, 3);
-  Serial.print("MEASURED: ");
-  Serial.print(measuredFrequency, 3);
-  Serial.println(" (Meaningful only if the motor is rotating)");
-
-  // PWM state printing
-  if (pwmRunning) {
-    Serial.println("PWM: RUNNING\n");
-  } else {
-    Serial.println("PWM: DISABLED\n");
-  }
-
-}
-// ------
-
-// ---Printing function for HELP via serial. To see all the possible commands---
-void printHelp() {
-  Serial.println("AVAILABLE COMMANDS:");
-  Serial.println("GO\tStarts the motor");
-  Serial.println("STOP\tStops the motor and the data acquisition: end of the experiment");
-  Serial.println("FREQ <Hz>\tSets the target frequency");
-  Serial.println("STATUS\tPrint the current motor status");
-  Serial.println("HELP\tPrint this command list");
-  Serial.println("STATE?\tPrint the current accelerometer state");
-  Serial.println("MEASURE\tStart the data acquisition");
-  Serial.println("STOP_MEASURE\tStop the data acquisition\n");
-}
-// ----
-
-// ---The actual Parser---
 void updateSerial() {
 
-  if (Serial.available() > 0) {
+  if (commandCharacteristic.written()) {
 
-    String command = Serial.readStringUntil('\n');
+    String command = commandCharacteristic.value();
 
     command.trim(); // to remove spaces between the characters of the strings
 
     if (command == "GO") {  // I am the one who has the possibility to actually change the state of the motor. So I run the changing-state-motorRiunning functions only trough
                             //  the keyboard
       startMotor(); // This function just set-up the motor to put it in a state in which it can actually starts running, but it will not starts it yet, this is a task for updateFrequency()
-      if (motorState == RAMPING) { // Say to the user that the motor has started once its state has changed (notice that I'm deliberatly lying since startMotor() just change the state
-                                   // of the machine, I'll have to wait another loop cycle to actually see the motor moving, but the cycle are really fast...)
-        Serial.print("Motor started: target frequency ");
-        Serial.print(targetFrequency);
-        Serial.println(" Hz.");
-      }
+      sendState();
     }
 
     else if (command == "STOP") { // Same idea as above
@@ -652,49 +660,29 @@ void updateSerial() {
       if (accelerometerState == MEASURING) {  // When python send the STOP message, set-up the MPU to return to the READY state
         if (stopMeasurement()) {
           accelerometerState = READY;
-          Serial.println("READY");
+          sendState();
         }
       }
       
       if (accelerometerState == READY) {
-        Serial.println("READY");
+        sendState();
       }
     }
 
     else if (command.startsWith("FREQ ")) {
-      if (accelerometerState == MEASURING) {
-        Serial.println("Frequency change currently not permitted");
+      String valueText = command.substring(5);
+      float frequency = valueText.toFloat();
+      if (motorState != STOPPED) {  // If the motor is STOPPED changing the frequency does not have to change its state, it has to stay steady until I say to him to start
+        motorState = RAMPING;
       }
-
-      else {
-          String valueText = command.substring(5);
-          float frequency = valueText.toFloat();
-          if (frequency > 0) {
-            if (motorState != STOPPED) {  // If the motor is STOPPED changing the frequency does not have to change its state, it has to stay steady until I say to him to start
-              motorState = RAMPING;
-            }
-            targetFrequency = frequency;  // update targetFrequency
-            previousFrequencyUpdate = micros(); // to re-set the previousFrequencyUpdate again so to avoid long deltaTime in updateFrequency and then shot of the motor, now unuseful since
-                                                // the delta time are set as default
-            Serial.print("Target frequency set to ");
-            Serial.print(frequency);
-            Serial.println(" Hz\n");
-          } else {
-            Serial.println("ERROR: frequency must be greater than 0 Hz\n");
-          }
-      }
+      targetFrequency = frequency;  // update targetFrequency
+      previousFrequencyUpdate = micros(); // to re-set the previousFrequencyUpdate again so to avoid long deltaTime in updateFrequency and then shot of the motor, now unuseful since
+                                          // the delta time are set as default
+      sendState();
     }
-
     else if (command == "STATE?") {  // Python continously requesting the state of the accelerometer machine
-
-      if (accelerometerState == INITIALIZING) {
-        Serial.println("INITIALIZING"); // Arduino communicates its state to python so that it can send the START message
-      }
-
-      else if (accelerometerState == READY) {
-        Serial.println("READY");
-      }
-
+      Serial.println("STATE? processed");
+      sendState();
     }
 
     else if (command == "MEASURE") { // If you obtain the python START message, then set-up the MPU to start measuring and if it succedes change the state
@@ -702,16 +690,12 @@ void updateSerial() {
         if (accelerometerState == READY) {
           if (startMeasurement()) {
             accelerometerState = MEASURING;
-            Serial.println("MEASURING");  // Once python has received the MEASURING-state-been-reached message, it can switch the binary packet decoder (important because I'm using the
+            sendState();  // Once python has received the MEASURING-state-been-reached message, it can switch the binary packet decoder (important because I'm using the
                                           // same serial connection for text and binary data)
           }
         } else {
-          Serial.println("Accelerometer NOT READY");
+          sendState();
         }
-      }
-
-      else {
-        Serial.println("MEASURING currently not permitted");
       }
     }
 
@@ -719,28 +703,26 @@ void updateSerial() {
       if (accelerometerState == MEASURING) {
         if (stopMeasurement()) {
           accelerometerState = READY;
-          Serial.println("READY");
+          sendState();
         }
       }
 
-    }
-
-    else if (command == "STATUS"){
-      printStatus();
-    }
-
-    else if (command == "HELP") {
-      printHelp();
-    }
-
-    else{
-      Serial.println("Unknown command. Type HELP to visualize the command list\n");
     }
   }
 }
 // ------
 
+// --- EMERGENCY STOP ---
+void emergencyStop() {
 
+    stopMotor();
+
+    if (accelerometerState == MEASURING) {
+        stopMeasurement();
+        accelerometerState = READY;
+    }
+}
+// ------
 
 void setup() {
 
@@ -753,6 +735,19 @@ void setup() {
   Serial.begin(115200);
 
   Wire.begin();
+
+
+  BLE.begin();
+
+  BLE.setLocalName("VibrationalTest");
+  BLE.setAdvertisedService(nanoService);
+
+  nanoService.addCharacteristic(commandCharacteristic);
+  nanoService.addCharacteristic(dataCharacteristic);
+
+  BLE.addService(nanoService);
+  BLE.advertise();
+
 
   digitalWrite(DIR_PIN, HIGH);
 
@@ -774,6 +769,21 @@ void setup() {
 }
 
 void loop() { // What to do while the system is ON.
+
+  BLE.poll();
+
+  bool connected = BLE.connected();
+
+  // Detect the transition:
+  // CONNECTED -> DISCONNECTED
+  if (wasConnected && !connected) {
+
+    Serial.println("BLE disconnected");
+
+    emergencyStop();
+  }
+
+  wasConnected = connected;
 
   updateFrequency(); // Firstly let's check if the frequency is OK and eventually updates it to reach the target requested
   updateSerial(); // Secondly update the serial communication so that the user can change the state of the motor
